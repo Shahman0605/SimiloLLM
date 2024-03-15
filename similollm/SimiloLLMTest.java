@@ -11,8 +11,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
+import java.util.Random;
 import java.util.regex.Pattern;
 
 import javax.imageio.ImageIO;
@@ -471,6 +473,12 @@ class SimiloLLMTest
 		for(Properties oracle:oracles)
 		{
 			oracleNo++;
+/*
+			if(oracleNo < 663)
+			{
+				continue;
+			}
+*/
 			System.out.println("Oracle no: "+oracleNo);
 			String app=(String)oracle.get("app");
 
@@ -481,6 +489,7 @@ class SimiloLLMTest
 			if(target!=null)
 			{
 				List<Properties> candidates=similoGPT.getByApp(app, dataNew);
+//				Collections.shuffle(candidates);
 				Locator targetLocator=similoGPT.toLocator(target);
 				List<Locator> candidateLocators=similoGPT.toLocators(candidates);
 				List<Locator> bestLocators=similo.similo(targetLocator, candidateLocators);
@@ -534,6 +543,160 @@ class SimiloLLMTest
 						long duration=end-start;
 						log("performance_llm.txt", ""+duration);
 						
+						boolean isCorrect=false;
+						if(response.indexOf(oracleWidgetId)>=0)
+						{
+							isCorrect=true;
+						}
+						if(isCorrect)
+						{
+							log("results_llm.txt", "Correct");
+							correctCount++;
+						}
+						else
+						{
+							if(isOracleAmongTheBest)
+							{
+								log("results_llm.txt", "Incorrect");
+								inCorrectCount++;
+							}
+							else
+							{
+								log("results_llm.txt", "Incorrect (since oracle not among the candidates)");
+								inCorrectCountNotAmong++;
+							}
+						}
+					}
+					else
+					{
+						System.out.println("Target oracle not found for: "+app+" - "+oracleXml);
+					}
+				}
+			}
+			else
+			{
+				System.out.println("Target not found for: "+app+" - "+fromXPath);
+			}
+		}
+
+		log("results_llm.txt", "\nTotal:");
+		log("results_llm.txt", "Correct: "+correctCount);
+		log("results_llm.txt", "Incorrect: "+inCorrectCount);
+		log("results_llm.txt", "Incorrect (since oracle not among the candidates): "+inCorrectCountNotAmong);
+	}
+
+	@Test
+	void testVONSimiloLLMWithExplanations()
+	{
+		Similo similo=new Similo();
+		SimiloLLM similoGPT=new SimiloLLM();
+
+		List<Properties> dataOld=similoGPT.readCSV("old.txt");
+		List<Properties> dataNew=similoGPT.readCSV("new.txt");
+		List<Properties> oracles=similoGPT.readCSV("oracles.txt");
+		System.out.println("No rows: "+dataOld.size());
+		System.out.println("No rows: "+dataNew.size());
+		System.out.println("No rows: "+oracles.size());
+
+		int correctCount=0;
+		int inCorrectCount=0;
+		int inCorrectCountNotAmong=0;
+
+		int oracleNo=0;
+		for(Properties oracle:oracles)
+		{
+			oracleNo++;
+			System.out.println("Oracle no: "+oracleNo);
+			String app=(String)oracle.get("app");
+
+			String fromXPath=(String)oracle.get("fromxpath");
+			String toXPath=(String)oracle.get("toxpath");
+
+			Properties target=similoGPT.getByXpath(app, fromXPath, dataOld);
+			if(target!=null)
+			{
+				List<Properties> candidates=similoGPT.getByApp(app, dataNew);
+				Locator targetLocator=similoGPT.toLocator(target);
+				List<Locator> candidateLocators=similoGPT.toLocators(candidates);
+				List<Locator> bestLocators=similo.similo(targetLocator, candidateLocators);
+
+				Locator bestLocator=bestLocators.get(0);
+				String bestXpath=(String)bestLocator.getMetadata("xpath");
+
+				if(containsParameterValue(bestXpath, toXPath))
+				{
+					// Similo correct
+					Random rand = new Random();
+	        int randomNumber = rand.nextInt(5);
+	        if(randomNumber > 0)
+	        {
+	        	continue;
+	        }
+				}
+				else
+				{
+					// Similo incorrect - continue to next oracle
+					continue;
+				}
+
+				List<String> oracleXmls=similoGPT.getOracleXpaths(app, fromXPath, oracles);
+				for(String oracleXml:oracleXmls)
+				{
+					oracleXml=pathToIndexPath(oracleXml);
+					Properties targetOracle=similoGPT.getByXpath(app, oracleXml, dataNew);
+					if(targetOracle!=null)
+					{
+						boolean isOracleAmongTheBest=false;
+						String oracleWidgetId = (String)targetOracle.get("widget_id");
+
+						String message="";
+						message+="Given the following candidate web elements (|| means that an attribute can have multiple values):\n";
+						for(int i=0; i<10 && i<bestLocators.size(); i++)
+						{
+							Locator locator=bestLocators.get(i);
+							message+=similoGPT.toJson(locator.getProperties())+"\n";
+
+							String locatorWidgetId = (String)locator.getMetadata("widget_id");
+							if(oracleWidgetId.equals(locatorWidgetId))
+							{
+								isOracleAmongTheBest=true;
+							}
+						}
+						message+="\nfind the one that is most similar to the element:\n";
+						message+=similoGPT.toJson(target, false)+"\n";
+//						message+="Answer with the widget_id number(digits) only, no explanation or text characters.\n";
+						message+="Answer with the widget_id (digit) of the most similar and motivate why (using a list)\n";
+						
+						Conversation conv=new Conversation();
+						conv.addSystemMessage("Given an old (target) web element and a list of up to 10 new candidate web elements from an evolved web application, help me identify the most likely new web element that the old element has been changed into. The old and new elements will have multiple attributes, such as tag, text, class, href, location, area, shape, xpath, neighbor_text, and potentially others. Consider that changes can be made manually by human developers or through (automated) software engineering tools. There are no specific weightings for the provided attributes. Just reply with one of the new candidate elements and with a list of (bulleted) motivations for why you think this is the most likely new element (that the old one has been changed to).");
+						String exampleUserMessage="Given the following candidate web elements (|| means that an attribute can have multiple values):\n";
+						exampleUserMessage+="{widget_id:\"400\",tag:\"li || a\",text:\"Sign In\",class:\"signin || link\",href:\"https://zoom.us/signin\",location:\"1283,40\"}\n";
+						exampleUserMessage+="{widget_id:\"410\",tag:\"li || a\",text:\"Plans & Pricing\",class:\"top-pricing\",href:\"https://zoom.us/pricing\",location:\"400,40\"}\n";
+						exampleUserMessage+="{widget_id:\"420\",tag:\"li || a\",text:\"Contact Sales\",class:\"top-contactsales top-sales\",href:\"https://explore.zoom.us/contactsales\",location:\"529,40\"}\n\n";
+						exampleUserMessage+="find the one that is most similar to the element:\n";
+						exampleUserMessage+="{tag:\"li || a\",text:\"PLANS\",class:\"link\",href:\"http://zoom.us/pricing\",location:\"601,0\"}\n";
+						exampleUserMessage+="Answer with the widget_id number(digits) only, no explanation or text characters.\n";
+						String exampleAssistantMessage="The most similar element is the one with widget_id \"410\". The reasons for this choice are:\n\n";
+						exampleAssistantMessage+="1. Both elements have \"li\" or \"a\" as their 'tag' attribute.\n";
+						exampleAssistantMessage+="2. The text \"Plans & Pricing\" in the element with widget_id \"410\" is closely related to the text \"PLANS\" in the given element.\n";
+						exampleAssistantMessage+="3. The 'href' attribute in both elements is almost the same, with a minor difference in the protocol used (https vs. http).\n";
+						exampleAssistantMessage+="4. Both elements have a similar 'location' attribute, indicating that they might be close to each other on the layout of the website.\n";
+						conv.addUserMessage(exampleUserMessage);
+						conv.addAssistantMessage(exampleAssistantMessage);
+
+						sleep(1000);
+
+						long start=System.currentTimeMillis();					
+						String response=conv.addMessage(message);
+
+						log("found.txt", response);							
+						log("found.txt", "");
+						log("found.txt", "");
+
+						long end=System.currentTimeMillis();
+						long duration=end-start;
+						log("performance_llm.txt", ""+duration);
+
 						boolean isCorrect=false;
 						if(response.indexOf(oracleWidgetId)>=0)
 						{

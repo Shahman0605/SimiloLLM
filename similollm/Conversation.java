@@ -79,7 +79,7 @@ public class Conversation
 			// Create a connection to the API
 			String url = "https://api.openai.com/v1/chat/completions";
 			HttpURLConnection con = (HttpURLConnection) new URL(url).openConnection();
-			String apiKey = "";
+			String apiKey = "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";
 			con.setRequestMethod("POST");
 			con.setRequestProperty("Content-Type", "application/json");
 			con.setRequestProperty("Authorization", "Bearer " + apiKey);

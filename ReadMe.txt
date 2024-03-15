@@ -15,6 +15,6 @@ Results from VON Similo LLM in: results/VONSimiloLLM
 
 Source code in: similollm
 
-Java Class containing unit test cases: similollm/SimiloLLM
+Java Class containing unit test cases: similollm/SimiloLLMTest
 
-Use a Java IDE (like Eclipse) to run the unit tests manually.
+Use a Java IDE (like Eclipse) to run the unit tests (in the SimiloLLMTest class) manually.
